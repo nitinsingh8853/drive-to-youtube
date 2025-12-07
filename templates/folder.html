@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Folder upload</title>
+</head>
+<body>
+<h1>Pick random video from Drive folder and upload</h1>
+<form method="post">
+  <label>Drive Folder ID: <input name="folder_id" required></label><br>
+  <label>Region (for trending tags): <input name="region" value="US"></label><br>
+  <button type="submit">Pick random and upload</button>
+</form>
+<p><a href="{{ url_for('index') }}">Back</a></p>
+</body>
+</html>

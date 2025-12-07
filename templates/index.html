@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Drive → YouTube Shorts</title>
+</head>
+<body>
+<h1>Drive → YouTube Shorts</h1>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <ul>
+    {% for m in messages %}
+      <li>{{ m }}</li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+{% endwith %}
+
+{% if authorized %}
+  <p>Authorized. <a href="{{ url_for('revoke') }}">Revoke credentials</a></p>
+  <ul>
+    <li><a href="{{ url_for('manual') }}">Manual upload (by Drive file id)</a></li>
+    <li><a href="{{ url_for('folder') }}">Manual folder upload (pick random)</a></li>
+  </ul>
+
+  <h3>Scheduler (auto-upload)</h3>
+  <form method="post" action="{{ url_for('sched_start') }}">
+    <label>Folder ID: <input name="folder_id" required></label><br>
+    <label>Region (for trending tags): <input name="region" value="US"></label><br>
+    <button type="submit">Start auto-upload every {{ config.SCHED_HOURS }} hours</button>
+  </form>
+  <p><a href="{{ url_for('sched_stop') }}">Stop scheduler</a></p>
+
+{% else %}
+  <p><a href="{{ url_for('authorize') }}">Authorize Google (Drive + YouTube)</a></p>
+{% endif %}
+</body>
+</html>
