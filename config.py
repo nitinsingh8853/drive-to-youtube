@@ -10,7 +10,7 @@ SCOPES = [
 
 # Scheduler interval (hours) for automatic upload
 SCHED_HOURS = 1
-SCHED_TEST_MODE = True
+SCHED_TEST_MODE = False
 
 # Region for fetching mostPopular videos (for trending tags)
 DEFAULT_REGION = 'US'
