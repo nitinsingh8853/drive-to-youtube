@@ -1,3 +1,4 @@
+# app.py (patched)
 import os
 import logging
 from flask import Flask, render_template, request, redirect, url_for, flash, session
@@ -9,7 +10,7 @@ from youtube_utils import build_youtube_service, upload_video_from_fileobj, set_
 from tags_utils import fetch_trending_hashtags
 from scheduler_utils import AutoUploader
 
-# For local development only — allow http redirect
+# For local development only — allow http redirect (keep this off in production)
 os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -20,7 +21,7 @@ def create_app():
     app = Flask(__name__)
     app.secret_key = os.environ.get('FLASK_SECRET', 'change-me')
 
-    # Scheduler
+    # Scheduler: create with app and init (init_app handles safe start vs reloader)
     app.auto_uploader = AutoUploader()
     app.auto_uploader.init_app(app)
 
@@ -33,18 +34,37 @@ def create_app():
     def authorize():
         if not os.path.exists(CLIENT_SECRETS_FILE):
             return 'Place credentials.json in the application folder.'
-        flow = Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES, redirect_uri=url_for('oauth2callback', _external=True))
-        auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
+        flow = Flow.from_client_secrets_file(
+            CLIENT_SECRETS_FILE,
+            scopes=SCOPES,
+            redirect_uri=url_for('oauth2callback', _external=True)
+        )
+        auth_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'
+        )
         session['state'] = state
         return redirect(auth_url)
 
     @app.route('/oauth2callback')
     def oauth2callback():
         state = session.get('state')
-        flow = Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES, state=state, redirect_uri=url_for('oauth2callback', _external=True))
-        flow.fetch_token(authorization_response=request.url)
+        flow = Flow.from_client_secrets_file(
+            CLIENT_SECRETS_FILE,
+            scopes=SCOPES,
+            state=state,
+            redirect_uri=url_for('oauth2callback', _external=True)
+        )
+        try:
+            flow.fetch_token(authorization_response=request.url)
+        except Exception as e:
+            logger.exception("Failed to fetch token during OAuth callback")
+            flash(f"OAuth token fetch failed: {e}")
+            return redirect(url_for('index'))
         creds = flow.credentials
         save_credentials(creds)
+        logger.info("Authorization complete; credentials saved")
         flash('Authorization complete')
         return redirect(url_for('index'))
 
@@ -78,9 +98,12 @@ def create_app():
             drive_service = build_drive_service(creds)
             youtube_service = build_youtube_service(creds)
             sp = download_drive_file_to_spooled(drive_service, drive_file_id)
-            # if tags empty, fetch trending tags
             if not tags:
-                tags = fetch_trending_hashtags(youtube_service)
+                try:
+                    tags = fetch_trending_hashtags(youtube_service) or []
+                except Exception:
+                    logger.exception("Failed to fetch trending tags for manual upload")
+                    tags = []
             video_id = upload_video_from_fileobj(youtube_service, sp, title, description, tags=tags)
             # thumbnail
             if thumb_drive_id:
@@ -121,7 +144,7 @@ def create_app():
             logger.exception('Folder manual upload failed')
             return render_template('result.html', message=f'Error: {e}')
 
-    # Scheduler control
+    # Scheduler control - start (runs immediately on start for convenience)
     @app.route('/scheduler/start', methods=['POST'])
     def sched_start():
         creds = load_credentials()
@@ -133,8 +156,9 @@ def create_app():
         if not folder_id:
             flash('Provide folder id')
             return redirect(url_for('index'))
-        app.auto_uploader.start(folder_id, region=region)
-        flash('Scheduler started')
+        # start and run immediately for testing; in production you can set run_immediately=False
+        app.auto_uploader.start(folder_id, region=region, run_immediately=True)
+        flash('Scheduler started (first run scheduled now)')
         return redirect(url_for('index'))
 
     @app.route('/scheduler/stop')
@@ -143,10 +167,37 @@ def create_app():
         flash('Scheduler stopped')
         return redirect(url_for('index'))
 
+    # Run now synchronous endpoint for debugging (runs job inside current request)
+    @app.route('/scheduler/run_now', methods=['POST'])
+    def sched_run_now():
+        creds = load_credentials()
+        if not creds:
+            flash('Authorize first')
+            return redirect(url_for('index'))
+        folder_id = (request.form.get('folder_id') or '').strip()
+        region = (request.form.get('region') or 'US').strip()
+        if not folder_id:
+            flash('Provide folder id')
+            return redirect(url_for('index'))
+
+        # set properties and call the job wrapper synchronously (it will use app.app_context())
+        try:
+            app.auto_uploader.folder_id = folder_id
+            app.auto_uploader.region = region
+            # run job synchronously (useful to see exceptions in logs immediately)
+            app.auto_uploader._job_wrapper()
+            flash('Run executed (check server logs for details)')
+        except Exception as e:
+            logger.exception("Run now failed")
+            flash(f'Run failed: {e}')
+        return redirect(url_for('index'))
+
     return app
 
 
 if __name__ == '__main__':
     app = create_app()
-    # debug True is convenient for development, but disable in production!
+    # During development you may want to disable the reloader to avoid scheduler confusion:
+    # app.run('0.0.0.0', port=5000, debug=True, use_reloader=False)
+    # For quick testing with scheduler-reloader safety checks enabled in scheduler_utils, this is fine:
     app.run('0.0.0.0', port=5000, debug=True)
